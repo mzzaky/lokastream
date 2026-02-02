@@ -63,9 +63,14 @@ export default function HomePage() {
           
           {/* Avatar */}
           <div className="flex justify-center mb-10">
-            <AvatarWithStickers 
-              emoji="🎮" 
-              stickers={['⭐', '💖', '🔥', '✨']}
+            <AvatarWithStickers
+              emoji="🎮"
+              stickers={[
+                { emoji: '⭐', position: 'top-right', color: 'var(--accent-yellow)' },
+                { emoji: '💖', position: 'bottom-left', color: 'var(--accent-pink)' },
+                { emoji: '🔥', position: 'top-left', color: 'var(--accent-orange)' },
+                { emoji: '✨', position: 'bottom-right', color: 'var(--accent-purple)' }
+              ]}
               size={180}
             />
           </div>
