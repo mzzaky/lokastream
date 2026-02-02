@@ -90,3 +90,87 @@ export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength) + '...';
 }
+
+export function getGameResultColor(result: string | null): string {
+  const resultColors: Record<string, string> = {
+    win: 'bg-green-100 text-green-700 border-green-400',
+    lose: 'bg-red-100 text-red-700 border-red-400',
+    draw: 'bg-yellow-100 text-yellow-700 border-yellow-400',
+  };
+  return resultColors[result || ''] || 'bg-gray-100 text-gray-500 border-gray-300';
+}
+
+export function getGameResultLabel(result: string | null): string {
+  const resultLabels: Record<string, string> = {
+    win: 'Menang',
+    lose: 'Kalah',
+    draw: 'Seri',
+  };
+  return resultLabels[result || ''] || 'Belum Selesai';
+}
+
+export function getGameResultEmoji(result: string | null): string {
+  const resultEmojis: Record<string, string> = {
+    win: '🏆',
+    lose: '😢',
+    draw: '🤝',
+  };
+  return resultEmojis[result || ''] || '🎮';
+}
+
+export function getSessionStatusColor(status: string): string {
+  const statusColors: Record<string, string> = {
+    preparing: 'bg-pastel-yellow text-yellow-700 border-candy-yellow',
+    in_progress: 'bg-pastel-blue text-candy-blue border-candy-blue',
+    completed: 'bg-pastel-mint text-green-700 border-candy-green',
+    cancelled: 'bg-gray-100 text-gray-500 border-gray-300',
+  };
+  return statusColors[status] || 'bg-gray-100 text-gray-500 border-gray-300';
+}
+
+export function getSessionStatusLabel(status: string): string {
+  const statusLabels: Record<string, string> = {
+    preparing: 'Persiapan',
+    in_progress: 'Berlangsung',
+    completed: 'Selesai',
+    cancelled: 'Dibatalkan',
+  };
+  return statusLabels[status] || status;
+}
+
+export function getGameTypeLabel(gameType: string): string {
+  const gameTypes: Record<string, string> = {
+    mobile_legends: 'Mobile Legends',
+    pubg_mobile: 'PUBG Mobile',
+    free_fire: 'Free Fire',
+    valorant: 'Valorant',
+    other: 'Lainnya',
+  };
+  return gameTypes[gameType] || gameType;
+}
+
+export function getGameTypeEmoji(gameType: string): string {
+  const gameEmojis: Record<string, string> = {
+    mobile_legends: '🦸',
+    pubg_mobile: '🔫',
+    free_fire: '🔥',
+    valorant: '🎯',
+    other: '🎮',
+  };
+  return gameEmojis[gameType] || '🎮';
+}
+
+export function formatShortDate(date: string | Date): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(date));
+}
+
+export function formatTime(date: string | Date): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(date));
+}
