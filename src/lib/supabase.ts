@@ -411,6 +411,104 @@ export const getGameSessions = async (streamerId: string, limit = 10) => {
   return { data, error };
 };
 
+// Get game sessions with pagination and filters
+export const getGameSessionsPaginated = async (
+  streamerId: string,
+  options: {
+    page?: number;
+    perPage?: number;
+    gameType?: string;
+    result?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  } = {}
+) => {
+  const { page = 1, perPage = 10, gameType, result, status, dateFrom, dateTo } = options;
+  const from = (page - 1) * perPage;
+  const to = from + perPage - 1;
+
+  let query = supabase
+    .from('game_sessions')
+    .select('*', { count: 'exact' })
+    .eq('streamer_id', streamerId)
+    .order('started_at', { ascending: false });
+
+  if (gameType && gameType !== 'all') {
+    query = query.eq('game_type', gameType);
+  }
+
+  if (result && result !== 'all') {
+    query = query.eq('game_result', result);
+  }
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status);
+  }
+
+  if (dateFrom) {
+    query = query.gte('started_at', dateFrom);
+  }
+
+  if (dateTo) {
+    query = query.lte('started_at', dateTo);
+  }
+
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+  return {
+    data,
+    error,
+    count: count || 0,
+    totalPages: Math.ceil((count || 0) / perPage),
+    currentPage: page
+  };
+};
+
+// Get game history stats
+export const getGameHistoryStats = async (streamerId: string) => {
+  const { data: sessions } = await supabase
+    .from('game_sessions')
+    .select('*')
+    .eq('streamer_id', streamerId)
+    .eq('status', 'completed');
+
+  if (!sessions || sessions.length === 0) {
+    return {
+      totalGames: 0,
+      totalWins: 0,
+      totalLosses: 0,
+      totalDraws: 0,
+      winRate: 0,
+      totalRevenue: 0,
+      averageDuration: 0,
+      totalPlayers: 0,
+    };
+  }
+
+  const totalGames = sessions.length;
+  const totalWins = sessions.filter(s => s.game_result === 'win').length;
+  const totalLosses = sessions.filter(s => s.game_result === 'lose').length;
+  const totalDraws = sessions.filter(s => s.game_result === 'draw').length;
+  const winRate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+  const totalRevenue = sessions.reduce((sum, s) => sum + (s.total_revenue || 0), 0);
+  const totalDuration = sessions.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+  const averageDuration = totalGames > 0 ? Math.round(totalDuration / totalGames) : 0;
+  const totalPlayers = sessions.reduce((sum, s) => sum + (s.players?.length || 0), 0);
+
+  return {
+    totalGames,
+    totalWins,
+    totalLosses,
+    totalDraws,
+    winRate,
+    totalRevenue,
+    averageDuration,
+    totalPlayers,
+  };
+};
+
 export const createGameSession = async (session: Database['public']['Tables']['game_sessions']['Insert']) => {
   const { data, error } = await supabase
     .from('game_sessions')
