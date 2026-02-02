@@ -1,12 +1,44 @@
 'use client';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Create Supabase client
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Create Supabase client with fallback for build time
+let supabase: SupabaseClient;
+
+if (supabaseUrl && supabaseAnonKey) {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
+} else {
+  // Create a mock client for build time
+  // This will be replaced with actual client at runtime
+  console.warn('Supabase URL or Anon Key not provided. Using mock client.');
+  supabase = {
+    auth: {
+      signUp: async () => ({ data: null, error: new Error('Supabase not configured') }),
+      signInWithPassword: async () => ({ data: null, error: new Error('Supabase not configured') }),
+      signOut: async () => ({ error: new Error('Supabase not configured') }),
+      getUser: async () => ({ data: { user: null }, error: new Error('Supabase not configured') }),
+      getSession: async () => ({ data: { session: null }, error: new Error('Supabase not configured') }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+    },
+    from: () => ({
+      select: () => ({ data: null, error: null, single: () => ({ data: null, error: null }), eq: () => ({ data: null, error: null, single: () => ({ data: null, error: null }) }) }),
+      insert: () => ({ data: null, error: null, select: () => ({ single: () => ({ data: null, error: null }) }) }),
+      update: () => ({ data: null, error: null, eq: () => ({ select: () => ({ single: () => ({ data: null, error: null }) }) }) }),
+      delete: () => ({ error: null, eq: () => ({ error: null }) }),
+      upsert: () => ({ data: null, error: null, select: () => ({ single: () => ({ data: null, error: null }) }) }),
+    }),
+    channel: () => ({
+      on: () => ({ subscribe: () => ({}) }),
+    }),
+    removeChannel: () => {},
+    rpc: () => ({}),
+  } as unknown as SupabaseClient;
+}
+
+export { supabase };
 
 // Database Types
 export type Database = {
