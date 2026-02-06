@@ -28,18 +28,20 @@ import {
   ChevronRight,
   LogOut,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Heart
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  getMabarSettings, 
-  getQueueEntries, 
+import {
+  getMabarSettings,
+  getQueueEntries,
   getDashboardStats,
   updateQueueEntry,
   deleteQueueEntry,
   createGameSession,
   getNextSessionNumber,
   subscribeToQueue,
+  getDonorCustomerStats,
   Database
 } from '@/lib/supabase';
 import { cn, formatCurrency, getRoleEmoji, getStatusColor, getStatusLabel, formatDate } from '@/lib/utils';
@@ -205,6 +207,7 @@ export default function DashboardPage() {
   const [queueEntries, setQueueEntries] = useState<QueueEntry[]>([]);
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [stats, setStats] = useState({ queueCount: 0, gamesCompleted: 0, totalMvp: 0, totalRevenue: 0 });
+  const [customerCount, setCustomerCount] = useState(0);
   const [isGameActive, setIsGameActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -247,6 +250,10 @@ export default function DashboardPage() {
         // Fetch stats
         const dashStats = await getDashboardStats(user.id);
         setStats(dashStats);
+
+        // Fetch customer count
+        const customerStats = await getDonorCustomerStats(user.id);
+        setCustomerCount(customerStats.totalCustomers);
 
       } catch (err) {
         console.error('Error fetching data:', err);
@@ -645,7 +652,19 @@ export default function DashboardPage() {
                   </div>
                   <ChevronRight className="w-5 h-5" />
                 </Link>
-                
+
+                <Link
+                  href="/dashboard/customers"
+                  className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-pastel-pink to-pastel-purple hover:from-candy-pink hover:to-candy-purple hover:text-white transition-all group"
+                >
+                  <Heart className="w-5 h-5 text-candy-pink group-hover:text-white" />
+                  <div className="flex-1">
+                    <p className="font-display font-bold">Daftar Pelanggan</p>
+                    <p className="font-body text-xs opacity-70">{customerCount} pelanggan</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5" />
+                </Link>
+
                 <Link
                   href="/dashboard/settings"
                   className="flex items-center gap-3 p-3 rounded-xl bg-pastel-pink hover:bg-candy-pink hover:text-white transition-all group"

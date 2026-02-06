@@ -210,6 +210,54 @@ CREATE INDEX idx_donations_date ON public.donations(created_at);
 CREATE INDEX idx_donations_status ON public.donations(payment_status);
 
 -- =====================================================
+-- DONOR CUSTOMERS TABLE
+-- Daftar pelanggan/donor yang pernah donasi
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.donor_customers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    streamer_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+
+    -- Identifikasi Pelanggan
+    player_name VARCHAR(100) NOT NULL,
+    game_id VARCHAR(100) NOT NULL,
+    game_nickname VARCHAR(100) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(20),
+
+    -- Auth (jika terdaftar)
+    user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+
+    -- Statistik Pelanggan
+    total_donations INTEGER NOT NULL DEFAULT 0,
+    total_amount_spent INTEGER NOT NULL DEFAULT 0,
+    total_games_played INTEGER NOT NULL DEFAULT 0,
+    total_mvp_wins INTEGER NOT NULL DEFAULT 0,
+    favorite_role VARCHAR(50),
+
+    -- Status & Label
+    customer_tier VARCHAR(20) DEFAULT 'bronze' CHECK (customer_tier IN ('bronze', 'silver', 'gold', 'platinum', 'diamond')),
+    notes TEXT,
+    is_blocked BOOLEAN DEFAULT false,
+
+    -- Riwayat
+    first_donation_at TIMESTAMPTZ,
+    last_donation_at TIMESTAMPTZ,
+    last_played_at TIMESTAMPTZ,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE(streamer_id, game_id)
+);
+
+-- Indexes untuk donor_customers
+CREATE INDEX idx_donor_customers_streamer ON public.donor_customers(streamer_id);
+CREATE INDEX idx_donor_customers_game_id ON public.donor_customers(game_id);
+CREATE INDEX idx_donor_customers_tier ON public.donor_customers(customer_tier);
+CREATE INDEX idx_donor_customers_total_amount ON public.donor_customers(total_amount_spent DESC);
+
+-- =====================================================
 -- FUNCTIONS & TRIGGERS
 -- =====================================================
 
@@ -240,6 +288,11 @@ CREATE TRIGGER update_queue_entries_updated_at
 
 CREATE TRIGGER update_mvp_records_updated_at
     BEFORE UPDATE ON public.mvp_records
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_donor_customers_updated_at
+    BEFORE UPDATE ON public.donor_customers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -285,6 +338,7 @@ ALTER TABLE public.queue_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.game_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mvp_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.donations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.donor_customers ENABLE ROW LEVEL SECURITY;
 
 -- Policies untuk users
 CREATE POLICY "Users can view their own data" ON public.users
@@ -330,6 +384,19 @@ CREATE POLICY "Anyone can view donations" ON public.donations
 
 CREATE POLICY "Anyone can insert donations" ON public.donations
     FOR INSERT WITH CHECK (true);
+
+-- Policies untuk donor_customers
+CREATE POLICY "Streamers can view their donor customers" ON public.donor_customers
+    FOR SELECT USING (auth.uid() = streamer_id);
+
+CREATE POLICY "Anyone can insert donor customers" ON public.donor_customers
+    FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Streamers can update their donor customers" ON public.donor_customers
+    FOR UPDATE USING (auth.uid() = streamer_id);
+
+CREATE POLICY "Anyone can upsert donor customers" ON public.donor_customers
+    FOR UPDATE WITH CHECK (true);
 
 -- =====================================================
 -- REALTIME SUBSCRIPTIONS

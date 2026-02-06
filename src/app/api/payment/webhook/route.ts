@@ -118,28 +118,86 @@ export async function POST(request: NextRequest) {
         .eq('payment_id', order_id);
     }
 
-    // If payment is completed, we can trigger notifications
+    // If payment is completed, create donation record and upsert donor customer
     if (paymentStatus === 'completed' && updatedEntry) {
-      // Here you could:
-      // 1. Send email confirmation
-      // 2. Send Discord/Telegram notification to streamer
-      // 3. Trigger real-time update to OBS overlay
-      // 4. Update any analytics
-
       console.log('Payment completed for queue entry:', updatedEntry.id);
 
-      // Example: You could create a donation record for tracking revenue
-      // await supabase.from('donations').insert({
-      //   streamer_id: updatedEntry.streamer_id,
-      //   donor_name: updatedEntry.player_name,
-      //   amount: parseInt(notification.gross_amount),
-      //   currency: 'IDR',
-      //   donation_type: 'mabar',
-      //   related_queue_entry_id: updatedEntry.id,
-      //   payment_status: 'completed',
-      //   payment_id: order_id,
-      //   payment_method: payment_type,
-      // });
+      // 1. Create donation record
+      await supabase.from('donations').insert({
+        streamer_id: updatedEntry.streamer_id,
+        donor_name: updatedEntry.player_name,
+        amount: parseInt(notification.gross_amount),
+        currency: 'IDR',
+        donation_type: 'mabar',
+        related_queue_entry_id: updatedEntry.id,
+        payment_status: 'completed',
+        payment_id: order_id,
+        payment_method: payment_type,
+      });
+
+      // 2. Upsert donor customer record
+      const now = new Date().toISOString();
+
+      // Check if customer already exists
+      const { data: existingCustomer } = await supabase
+        .from('donor_customers')
+        .select('*')
+        .eq('streamer_id', updatedEntry.streamer_id)
+        .eq('game_id', updatedEntry.game_id)
+        .single();
+
+      const donationAmount = parseInt(notification.gross_amount) || updatedEntry.amount_paid;
+
+      if (existingCustomer) {
+        // Update existing customer
+        const newTotalDonations = existingCustomer.total_donations + 1;
+        const newTotalAmount = existingCustomer.total_amount_spent + donationAmount;
+
+        // Calculate tier based on total amount spent
+        let tier: 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond' = 'bronze';
+        if (newTotalAmount >= 2000000) tier = 'diamond';
+        else if (newTotalAmount >= 1000000) tier = 'platinum';
+        else if (newTotalAmount >= 500000) tier = 'gold';
+        else if (newTotalAmount >= 200000) tier = 'silver';
+
+        await supabase
+          .from('donor_customers')
+          .update({
+            player_name: updatedEntry.player_name,
+            game_nickname: updatedEntry.game_nickname,
+            email: updatedEntry.email || existingCustomer.email,
+            phone: updatedEntry.phone || existingCustomer.phone,
+            total_donations: newTotalDonations,
+            total_amount_spent: newTotalAmount,
+            favorite_role: updatedEntry.selected_role,
+            customer_tier: tier,
+            last_donation_at: now,
+          })
+          .eq('id', existingCustomer.id);
+      } else {
+        // Create new customer
+        let tier: 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond' = 'bronze';
+        if (donationAmount >= 2000000) tier = 'diamond';
+        else if (donationAmount >= 1000000) tier = 'platinum';
+        else if (donationAmount >= 500000) tier = 'gold';
+        else if (donationAmount >= 200000) tier = 'silver';
+
+        await supabase.from('donor_customers').insert({
+          streamer_id: updatedEntry.streamer_id,
+          player_name: updatedEntry.player_name,
+          game_id: updatedEntry.game_id,
+          game_nickname: updatedEntry.game_nickname,
+          email: updatedEntry.email,
+          phone: updatedEntry.phone,
+          user_id: updatedEntry.user_id,
+          total_donations: 1,
+          total_amount_spent: donationAmount,
+          favorite_role: updatedEntry.selected_role,
+          customer_tier: tier,
+          first_donation_at: now,
+          last_donation_at: now,
+        });
+      }
     }
 
     // Midtrans expects a 200 OK response

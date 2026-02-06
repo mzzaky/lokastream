@@ -234,6 +234,45 @@ export interface Donation {
 }
 
 // =====================
+// DONOR CUSTOMER TYPES
+// =====================
+export interface DonorCustomer {
+  id: string;
+  streamer_id: string;
+
+  // Identifikasi
+  player_name: string;
+  game_id: string;
+  game_nickname: string;
+  email?: string;
+  phone?: string;
+  user_id?: string;
+
+  // Statistik
+  total_donations: number;
+  total_amount_spent: number;
+  total_games_played: number;
+  total_mvp_wins: number;
+  favorite_role?: string;
+
+  // Status
+  customer_tier: CustomerTier;
+  notes?: string;
+  is_blocked: boolean;
+
+  // Riwayat
+  first_donation_at?: string;
+  last_donation_at?: string;
+  last_played_at?: string;
+
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+}
+
+export type CustomerTier = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
+
+// =====================
 // ANALYTICS TYPES
 // =====================
 export interface StreamerAnalytics {
