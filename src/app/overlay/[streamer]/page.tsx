@@ -1,21 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Crown, Zap, Star, Users, Gamepad2 } from 'lucide-react';
+import { useState, useEffect, useCallback, use } from 'react';
+import { Zap, Users, Gamepad2 } from 'lucide-react';
 import { cn, getRoleEmoji, formatCurrency } from '@/lib/utils';
+import {
+  supabase,
+  getMabarSettingsByUsername,
+  getQueueEntries,
+  subscribeToQueue,
+  subscribeToSessions
+} from '@/lib/supabase';
+import { QueueEntry, OverlayTheme, MabarSettings } from '@/types';
 
-// Mock queue data
-const mockQueue = [
-  { id: '1', player_name: 'GamerPro123', game_nickname: 'ProPlayer', selected_role: 'Jungler', queue_position: 1, status: 'playing' },
-  { id: '2', player_name: 'MLKing', game_nickname: 'KingML', selected_role: 'Midlaner', queue_position: 2, status: 'selected' },
-  { id: '3', player_name: 'SupportQueen', game_nickname: 'QueenSupport', selected_role: 'Support', queue_position: 3, status: 'selected' },
-  { id: '4', player_name: 'TankMaster', game_nickname: 'MasterTank', selected_role: 'Roamer', queue_position: 4, status: 'selected' },
-  { id: '5', player_name: 'ExpLord', game_nickname: 'LordExp', selected_role: 'EXP Laner', queue_position: 5, status: 'waiting' },
-  { id: '6', player_name: 'ProAssassin', game_nickname: 'AssassinPro', selected_role: 'Jungler', queue_position: 6, status: 'waiting' },
-];
-
-// Notification types
-interface Notification {
+// Notification types for overlay
+interface OverlayNotification {
   id: string;
   type: 'new_registration' | 'game_start' | 'mvp';
   player_name: string;
@@ -24,12 +22,13 @@ interface Notification {
   message?: string;
 }
 
-const mockNotification: Notification = {
-  id: '1',
-  type: 'new_registration',
-  player_name: 'NewPlayer123',
-  role: 'Midlaner',
-  amount: 50000,
+// Default overlay theme
+const defaultTheme: OverlayTheme = {
+  background_color: '#1A1A2E',
+  text_color: '#FFFFFF',
+  accent_color: '#FF6B9D',
+  font_family: 'Fredoka',
+  animation_style: 'bounce',
 };
 
 // Queue Item for Overlay
@@ -81,7 +80,7 @@ const OverlayQueueItem = ({ entry, isActive }: { entry: any; isActive: boolean }
 );
 
 // Notification Popup
-const NotificationPopup = ({ notification, onClose }: { notification: Notification; onClose: () => void }) => {
+const NotificationPopup = ({ notification, onClose }: { notification: OverlayNotification; onClose: () => void }) => {
   useEffect(() => {
     const timer = setTimeout(onClose, 5000);
     return () => clearTimeout(timer);
@@ -145,21 +144,196 @@ const NotificationPopup = ({ notification, onClose }: { notification: Notificati
   );
 };
 
-export default function OverlayPage({ params }: { params: { streamer: string } }) {
-  const [queue, setQueue] = useState(mockQueue);
-  const [currentNotification, setCurrentNotification] = useState<Notification | null>(null);
-  const [isGameActive, setIsGameActive] = useState(true);
+export default function OverlayPage({ params }: { params: Promise<{ streamer: string }> }) {
+  // Unwrap params using React.use() for Next.js 15
+  const { streamer } = use(params);
 
-  // Simulate notification
-  useEffect(() => {
-    // Show initial notification for demo
-    setTimeout(() => {
-      setCurrentNotification(mockNotification);
-    }, 2000);
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [currentNotification, setCurrentNotification] = useState<OverlayNotification | null>(null);
+  const [isGameActive, setIsGameActive] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [mabarSettings, setMabarSettings] = useState<MabarSettings | null>(null);
+  const [streamerId, setStreamerId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<OverlayTheme>(defaultTheme);
+
+  // Show notification helper
+  const showNotification = useCallback((notification: OverlayNotification) => {
+    setCurrentNotification(notification);
   }, []);
 
+  // Fetch initial data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Get mabar settings by streamer username
+        const { data: settings, error: settingsError, user } = await getMabarSettingsByUsername(streamer);
+
+        if (settingsError || !settings || !user) {
+          setError('Streamer tidak ditemukan atau belum mengaktifkan Mabar VIP');
+          setIsLoading(false);
+          return;
+        }
+
+        setMabarSettings(settings as unknown as MabarSettings);
+        setStreamerId(user.id);
+
+        // Set theme from settings
+        if (settings.overlay_theme) {
+          setTheme(settings.overlay_theme as OverlayTheme);
+        }
+
+        // Fetch queue entries
+        const { data: queueData, error: queueError } = await getQueueEntries(
+          user.id,
+          ['waiting', 'selected', 'playing']
+        );
+
+        if (queueError) {
+          console.error('Error fetching queue:', queueError);
+        } else {
+          setQueue((queueData as unknown as QueueEntry[]) || []);
+          // Check if there's an active game
+          const hasPlayingPlayers = queueData?.some(entry => entry.status === 'playing');
+          setIsGameActive(!!hasPlayingPlayers);
+        }
+
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Error loading overlay:', err);
+        setError('Terjadi kesalahan saat memuat overlay');
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [streamer]);
+
+  // Subscribe to real-time updates
+  useEffect(() => {
+    if (!streamerId) return;
+
+    // Subscribe to queue changes
+    const queueSubscription = subscribeToQueue(streamerId, (payload) => {
+      const { eventType, new: newEntry, old: oldEntry } = payload;
+
+      if (eventType === 'INSERT') {
+        const entry = newEntry as QueueEntry;
+        // Add new entry to queue
+        setQueue(prev => {
+          const exists = prev.some(e => e.id === entry.id);
+          if (exists) return prev;
+          return [...prev, entry].sort((a, b) => a.queue_position - b.queue_position);
+        });
+
+        // Show notification for new registration (only if payment completed)
+        if (entry.payment_status === 'completed') {
+          showNotification({
+            id: entry.id,
+            type: 'new_registration',
+            player_name: entry.player_name,
+            role: entry.selected_role,
+            amount: entry.amount_paid,
+          });
+        }
+      } else if (eventType === 'UPDATE') {
+        const entry = newEntry as QueueEntry;
+        setQueue(prev =>
+          prev.map(e => e.id === entry.id ? entry : e)
+            .filter(e => ['waiting', 'selected', 'playing'].includes(e.status))
+            .sort((a, b) => a.queue_position - b.queue_position)
+        );
+
+        // Check if game just started
+        const wasNotPlaying = oldEntry && oldEntry.status !== 'playing';
+        if (wasNotPlaying && entry.status === 'playing') {
+          setIsGameActive(true);
+        }
+
+        // Show notification for newly registered (payment just completed)
+        if (oldEntry?.payment_status === 'pending' && entry.payment_status === 'completed') {
+          showNotification({
+            id: entry.id,
+            type: 'new_registration',
+            player_name: entry.player_name,
+            role: entry.selected_role,
+            amount: entry.amount_paid,
+          });
+        }
+      } else if (eventType === 'DELETE') {
+        const entry = oldEntry as QueueEntry;
+        setQueue(prev => prev.filter(e => e.id !== entry.id));
+      }
+    });
+
+    // Subscribe to game session changes
+    const sessionSubscription = subscribeToSessions(streamerId, (payload) => {
+      const { eventType, new: newSession } = payload;
+
+      if (eventType === 'INSERT' || eventType === 'UPDATE') {
+        if (newSession.status === 'in_progress') {
+          setIsGameActive(true);
+          showNotification({
+            id: newSession.id,
+            type: 'game_start',
+            player_name: '',
+            message: 'Game Dimulai!',
+          });
+        } else if (newSession.status === 'completed') {
+          setIsGameActive(false);
+
+          // Show MVP notification if MVP was selected
+          if (newSession.mvp_player_id && newSession.players) {
+            const mvpPlayer = newSession.players.find(
+              (p: { queue_entry_id: string }) => p.queue_entry_id === newSession.mvp_player_id
+            );
+            if (mvpPlayer) {
+              showNotification({
+                id: `mvp-${newSession.id}`,
+                type: 'mvp',
+                player_name: mvpPlayer.player_name,
+              });
+            }
+          }
+        }
+      }
+    });
+
+    // Cleanup subscriptions
+    return () => {
+      supabase.removeChannel(queueSubscription);
+      supabase.removeChannel(sessionSubscription);
+    };
+  }, [streamerId, showNotification]);
+
+  // Filter queue for display
   const activePlayers = queue.filter(e => e.status === 'playing' || e.status === 'selected').slice(0, 4);
   const waitingPlayers = queue.filter(e => e.status === 'waiting').slice(0, 3);
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
+        <div className="text-white/50 font-display text-xl animate-pulse">
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
+        <div className="bg-[#1A1A2E]/90 p-6 rounded-2xl border-2 border-red-500/50 max-w-md">
+          <p className="text-red-400 font-display text-center">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-transparent font-display">
