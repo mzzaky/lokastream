@@ -209,6 +209,52 @@ export type Database = {
         };
         Update: Partial<Database['public']['Tables']['mvp_records']['Insert']>;
       };
+      donor_customers: {
+        Row: {
+          id: string;
+          streamer_id: string;
+          player_name: string;
+          game_id: string;
+          game_nickname: string;
+          email: string | null;
+          phone: string | null;
+          user_id: string | null;
+          total_donations: number;
+          total_amount_spent: number;
+          total_games_played: number;
+          total_mvp_wins: number;
+          favorite_role: string | null;
+          customer_tier: 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
+          notes: string | null;
+          is_blocked: boolean;
+          first_donation_at: string | null;
+          last_donation_at: string | null;
+          last_played_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          streamer_id: string;
+          player_name: string;
+          game_id: string;
+          game_nickname: string;
+          email?: string | null;
+          phone?: string | null;
+          user_id?: string | null;
+          total_donations?: number;
+          total_amount_spent?: number;
+          total_games_played?: number;
+          total_mvp_wins?: number;
+          favorite_role?: string | null;
+          customer_tier?: 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
+          notes?: string | null;
+          is_blocked?: boolean;
+          first_donation_at?: string | null;
+          last_donation_at?: string | null;
+          last_played_at?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['donor_customers']['Insert']>;
+      };
       donations: {
         Row: {
           id: string;
@@ -629,6 +675,108 @@ export const getDashboardStats = async (streamerId: string) => {
     totalMvp,
     totalRevenue,
   };
+};
+
+// Donor customer functions
+export const getDonorCustomers = async (
+  streamerId: string,
+  options: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+    tier?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  } = {}
+) => {
+  const { page = 1, perPage = 20, search, tier, sortBy = 'total_amount_spent', sortOrder = 'desc' } = options;
+  const from = (page - 1) * perPage;
+  const to = from + perPage - 1;
+
+  let query = supabase
+    .from('donor_customers')
+    .select('*', { count: 'exact' })
+    .eq('streamer_id', streamerId);
+
+  if (search) {
+    query = query.or(`player_name.ilike.%${search}%,game_id.ilike.%${search}%,game_nickname.ilike.%${search}%`);
+  }
+
+  if (tier && tier !== 'all') {
+    query = query.eq('customer_tier', tier);
+  }
+
+  query = query.order(sortBy, { ascending: sortOrder === 'asc' }).range(from, to);
+
+  const { data, error, count } = await query;
+  return {
+    data,
+    error,
+    count: count || 0,
+    totalPages: Math.ceil((count || 0) / perPage),
+    currentPage: page,
+  };
+};
+
+export const getDonorCustomerStats = async (streamerId: string) => {
+  const { data: customers } = await supabase
+    .from('donor_customers')
+    .select('*')
+    .eq('streamer_id', streamerId);
+
+  if (!customers || customers.length === 0) {
+    return {
+      totalCustomers: 0,
+      totalRevenue: 0,
+      avgSpentPerCustomer: 0,
+      topTierCount: 0,
+      newThisMonth: 0,
+      repeatCustomers: 0,
+    };
+  }
+
+  const now = new Date();
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+  const totalCustomers = customers.length;
+  const totalRevenue = customers.reduce((sum, c) => sum + c.total_amount_spent, 0);
+  const avgSpentPerCustomer = totalCustomers > 0 ? Math.round(totalRevenue / totalCustomers) : 0;
+  const topTierCount = customers.filter(c => ['gold', 'platinum', 'diamond'].includes(c.customer_tier)).length;
+  const newThisMonth = customers.filter(c => c.created_at >= firstOfMonth).length;
+  const repeatCustomers = customers.filter(c => c.total_donations > 1).length;
+
+  return {
+    totalCustomers,
+    totalRevenue,
+    avgSpentPerCustomer,
+    topTierCount,
+    newThisMonth,
+    repeatCustomers,
+  };
+};
+
+export const updateDonorCustomer = async (
+  customerId: string,
+  updates: Database['public']['Tables']['donor_customers']['Update']
+) => {
+  const { data, error } = await supabase
+    .from('donor_customers')
+    .update(updates)
+    .eq('id', customerId)
+    .select()
+    .single();
+  return { data, error };
+};
+
+export const upsertDonorCustomer = async (
+  customer: Database['public']['Tables']['donor_customers']['Insert']
+) => {
+  const { data, error } = await supabase
+    .from('donor_customers')
+    .upsert(customer, { onConflict: 'streamer_id,game_id' })
+    .select()
+    .single();
+  return { data, error };
 };
 
 // Realtime subscriptions
