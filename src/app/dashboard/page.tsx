@@ -39,6 +39,8 @@ import {
   updateQueueEntry,
   deleteQueueEntry,
   createGameSession,
+  updateGameSession,
+  getGameSessions,
   getNextSessionNumber,
   subscribeToQueue,
   getDonorCustomerStats,
@@ -209,6 +211,9 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({ queueCount: 0, gamesCompleted: 0, totalMvp: 0, totalRevenue: 0 });
   const [customerCount, setCustomerCount] = useState(0);
   const [isGameActive, setIsGameActive] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionStartedAt, setCurrentSessionStartedAt] = useState<string | null>(null);
+  const [playingPlayerIds, setPlayingPlayerIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -255,6 +260,20 @@ export default function DashboardPage() {
         const customerStats = await getDonorCustomerStats(user.id);
         setCustomerCount(customerStats.totalCustomers);
 
+        // Detect active game session (persist across refresh)
+        const { data: activeSessions } = await getGameSessions(user.id, 1);
+        if (activeSessions && activeSessions.length > 0 && activeSessions[0].status === 'in_progress') {
+          const activeSession = activeSessions[0];
+          setIsGameActive(true);
+          setCurrentSessionId(activeSession.id);
+          setCurrentSessionStartedAt(activeSession.started_at);
+          // Find playing queue entries
+          const { data: playingEntries } = await getQueueEntries(user.id, ['playing']);
+          if (playingEntries) {
+            setPlayingPlayerIds(playingEntries.map(e => e.id));
+          }
+        }
+
       } catch (err) {
         console.error('Error fetching data:', err);
         setError('Gagal memuat data');
@@ -282,11 +301,17 @@ export default function DashboardPage() {
   }, [user]);
 
   // Handle player selection
-  const handleSelectPlayer = (id: string) => {
+  const handleSelectPlayer = async (id: string) => {
     if (selectedPlayers.includes(id)) {
+      // Deselect: update status back to 'waiting' in DB
       setSelectedPlayers(selectedPlayers.filter(p => p !== id));
+      await updateQueueEntry(id, { status: 'waiting' });
+      setQueueEntries(prev => prev.map(e => e.id === id ? { ...e, status: 'waiting' } : e));
     } else if (selectedPlayers.length < 4) {
+      // Select: update status to 'selected' in DB
       setSelectedPlayers([...selectedPlayers, id]);
+      await updateQueueEntry(id, { status: 'selected' });
+      setQueueEntries(prev => prev.map(e => e.id === id ? { ...e, status: 'selected' } : e));
     }
   };
 
@@ -310,12 +335,20 @@ export default function DashboardPage() {
 
     if (!user || !mabarSettings) return;
 
+    // Validate all selected players have completed payment
+    const selectedEntries = queueEntries.filter(e => selectedPlayers.includes(e.id));
+    const unpaidPlayers = selectedEntries.filter(e => e.payment_status !== 'completed');
+    if (unpaidPlayers.length > 0) {
+      const names = unpaidPlayers.map(e => e.player_name).join(', ');
+      alert(`Pemain berikut belum membayar: ${names}. Hapus dari seleksi atau tunggu pembayaran selesai.`);
+      return;
+    }
+
     try {
       // Get next session number
       const { sessionNumber } = await getNextSessionNumber(user.id);
 
       // Create game session
-      const selectedEntries = queueEntries.filter(e => selectedPlayers.includes(e.id));
       const players = selectedEntries.map(e => ({
         id: e.id,
         player_name: e.player_name,
@@ -336,13 +369,23 @@ export default function DashboardPage() {
 
       if (error) throw error;
 
-      // Update queue entries status to playing
-      for (const id of selectedPlayers) {
-        await updateQueueEntry(id, { status: 'playing' });
+      // Update all queue entries status to playing in parallel
+      const updateResults = await Promise.all(
+        selectedPlayers.map(id => updateQueueEntry(id, { status: 'playing' }))
+      );
+
+      // Check if any updates failed
+      const failedUpdates = updateResults.filter(r => r.error);
+      if (failedUpdates.length > 0) {
+        console.error('Some queue entry updates failed:', failedUpdates);
       }
 
+      // Track active session state
+      setCurrentSessionId(session.id);
+      setCurrentSessionStartedAt(session.started_at);
+      setPlayingPlayerIds([...selectedPlayers]);
       setIsGameActive(true);
-      
+
       // Refetch queue
       const { data: entries } = await getQueueEntries(user.id, ['waiting', 'selected']);
       setQueueEntries(entries || []);
@@ -351,6 +394,58 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Error starting game:', err);
       alert('Gagal memulai game');
+    }
+  };
+
+  // Handle end game
+  const handleEndGame = async () => {
+    if (!currentSessionId || !user) return;
+
+    try {
+      // Calculate duration
+      const startedAt = currentSessionStartedAt ? new Date(currentSessionStartedAt) : new Date();
+      const durationMinutes = Math.round((Date.now() - startedAt.getTime()) / 60000);
+
+      // Update game session in database
+      const { error: sessionError } = await updateGameSession(currentSessionId, {
+        status: 'completed',
+        ended_at: new Date().toISOString(),
+        duration_minutes: durationMinutes,
+      });
+
+      if (sessionError) {
+        console.error('Error updating game session:', sessionError);
+        alert('Gagal mengakhiri sesi game');
+        return;
+      }
+
+      // Update all playing queue entries to completed in parallel
+      if (playingPlayerIds.length > 0) {
+        const updateResults = await Promise.all(
+          playingPlayerIds.map(id => updateQueueEntry(id, { status: 'completed' }))
+        );
+        const failedUpdates = updateResults.filter(r => r.error);
+        if (failedUpdates.length > 0) {
+          console.error('Some queue entry updates failed:', failedUpdates);
+        }
+      }
+
+      // Reset game state
+      setIsGameActive(false);
+      setCurrentSessionId(null);
+      setCurrentSessionStartedAt(null);
+      setPlayingPlayerIds([]);
+
+      // Refetch queue and stats
+      const { data: entries } = await getQueueEntries(user.id, ['waiting', 'selected']);
+      setQueueEntries(entries || []);
+
+      const dashStats = await getDashboardStats(user.id);
+      setStats(dashStats);
+
+    } catch (err) {
+      console.error('Error ending game:', err);
+      alert('Gagal mengakhiri game');
     }
   };
 
@@ -561,7 +656,7 @@ export default function DashboardPage() {
                 </button>
                 {isGameActive && (
                   <button
-                    onClick={() => setIsGameActive(false)}
+                    onClick={handleEndGame}
                     className="btn-cartoon-blue"
                   >
                     <Check className="w-5 h-5 mr-2" />
